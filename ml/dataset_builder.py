@@ -24,7 +24,9 @@ def _load_json_uri(uri: str) -> dict:
 
 
 def text_from_payload(payload: dict) -> str:
-    """Flatten fields into a single string for TF-IDF."""
+    """Flatten fields into a single string for ML training. Prefer raw_text if present."""
+    if payload.get("raw_text"):
+        return payload["raw_text"]
     parts = [payload.get("doc_type") or "", json.dumps(payload.get("fields") or {})]
     return " ".join(parts)
 

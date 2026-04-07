@@ -40,21 +40,51 @@ def main():
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=42, stratify=y if len(set(y)) > 1 else None
     )
+
+    # Use a more robust pipeline: Random Forest often outperforms Logistic Regression for this task.
+    # We include stop words and sublinear TF scaling to handle variable document lengths.
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import classification_report, f1_score
+
     model = Pipeline(
         [
-            ("tfidf", TfidfVectorizer(max_features=4096, ngram_range=(1, 2))),
-            ("clf", LogisticRegression(max_iter=200, class_weight="balanced")),
+            (
+                "tfidf",
+                TfidfVectorizer(
+                    max_features=8192,  # Increased from 4096
+                    ngram_range=(1, 3),  # Include trigrams (e.g. "bill to amount")
+                    stop_words="english",
+                    sublinear_tf=True,
+                ),
+            ),
+            (
+                "clf",
+                RandomForestClassifier(
+                    n_estimators=200, n_jobs=-1, class_weight="balanced", random_state=42
+                ),
+            ),
         ]
     )
+
+    print(f"Training on {len(X_train)} samples...")
     model.fit(X_train, y_train)
+
     pred = model.predict(X_test)
     acc = float(accuracy_score(y_test, pred))
+    f1 = float(f1_score(y_test, pred, average="weighted"))
 
-    params = {"model": "logistic_tfidf", "samples": len(X)}
-    metrics = {"accuracy": acc, "loss": 1.0 - acc}
+    print(f"accuracy={acc:.4f} f1_weighted={f1:.4f}")
+    print("\nClassification Report:")
+    print(classification_report(y_test, pred))
+
+    # Log more descriptive metrics to MLflow for better analysis.
+    params = {
+        "model_type": "random_forest_tfidf",
+        "vectorizer_ngram_range": (1, 3),
+        "total_samples": len(X),
+    }
+    metrics = {"accuracy": acc, "f1_weighted": f1}
     run_id = log_sklearn_run(model, params, metrics)
-
-    print(f"accuracy={acc:.4f} run_id={run_id}")
 
     if args.register and run_id:
         register_model_from_run(run_id, stage=args.stage)

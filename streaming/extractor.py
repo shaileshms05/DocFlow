@@ -108,7 +108,12 @@ def extract_fields(text: str, doc_type_hint: str | None = None) -> Dict[str, Any
     else:
         fields = {"raw_preview": text[:500]}
 
-    return {"doc_type": doc_type, "fields": fields, "confidence": round(conf, 4)}
+    return {
+        "doc_type": doc_type,
+        "fields": fields,
+        "confidence": round(conf, 4),
+        "raw_text": text,
+    }
 
 
 def build_result_payload(doc_id: str, text: str, doc_type_hint: str | None) -> Dict[str, Any]:
