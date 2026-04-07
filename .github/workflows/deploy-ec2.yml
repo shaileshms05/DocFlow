@@ -5,9 +5,8 @@
 #   EC2_DEPLOY_PATH, EC2_SSH_PORT, EC2_DOCKER_ENV  (optional)
 #
 # EC2_DOCKER_ENV: multiline secret, e.g.
-#   S3_OUTPUT_BUCKET=my-bucket
-#   S3_INPUT_BUCKET=my-raw
-#   AWS_REGION=us-east-1
+#   S3_BUCKET=my-docflow-bucket
+#   AWS_REGION=eu-north-1
 # Written to $REPO/docker/.env before docker compose (chmod 600).
 #
 # EC2 must have a real git clone at EC2_DEPLOY_PATH (not a copied folder — need .git).
@@ -90,6 +89,21 @@ jobs:
             git fetch origin "$BRANCH"
             git checkout "$BRANCH"
             git reset --hard "origin/$BRANCH"
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "::error::docker not installed on this server (SSH session cannot find it)."
+              echo "SSH in once and run:"
+              echo "  curl -fsSL https://get.docker.com | sudo sh"
+              echo "  sudo usermod -aG docker \"\$USER\""
+              echo "Then log out and back in (or reboot), verify: docker run --rm hello-world"
+              echo "From repo you can also run: bash scripts/ec2-bootstrap.sh"
+              exit 127
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "::error::Docker Compose v2 plugin missing. On Ubuntu/Debian:"
+              echo "  sudo apt-get update && sudo apt-get install -y docker-compose-plugin"
+              exit 1
+            fi
             cd docker
             if [ -n "${EC2_DOCKER_ENV:-}" ]; then
               umask 077

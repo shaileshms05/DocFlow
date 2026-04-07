@@ -24,8 +24,8 @@ app = FastAPI(
     title="Document Intelligence Ingestion",
     version="0.3.0",
     description=(
-        "**Flow:** `POST /upload` stores the file (S3 when configured, else local), writes an optional **ingest** "
-        "manifest JSON to `S3_OUTPUT_BUCKET` (prefix `ingest/`) or `data/ingest/`, then publishes to Kafka "
+        "**Flow:** `POST /upload` stores the file (S3 when `S3_BUCKET` is set, else local), writes **ingest** "
+        "manifest JSON under `ingest/` in that bucket or `data/ingest/`, then publishes to Kafka "
         "`document_uploads`. The consumer loads `file_path`, runs OCR + extraction, and writes **processed** JSON "
         "to the output bucket (or local `data/processed/`)."
     ),

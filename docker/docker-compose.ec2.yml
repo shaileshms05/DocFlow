@@ -1,5 +1,5 @@
 # EC2: internal Kafka only; API on :8000; MLflow on 127.0.0.1:5000.
-# No Postgres — use S3_OUTPUT_BUCKET (+ S3_INPUT_BUCKET for raw uploads) with IAM role on EC2.
+# No Postgres — set S3_BUCKET (+ AWS_REGION) for one-bucket layout: raw/, processed/, ingest/, feedback/
 #
 #   docker compose -f docker-compose.ec2.yml up -d --build
 
@@ -24,6 +24,12 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:29092 || exit 1"]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+      start_period: 45s
 
   mlflow:
     image: python:3.11-slim
@@ -44,7 +50,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -52,8 +59,7 @@ services:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DATA_DIR: /data
       AWS_REGION: ${AWS_REGION:-}
-      S3_INPUT_BUCKET: ${S3_INPUT_BUCKET:-}
-      S3_OUTPUT_BUCKET: ${S3_OUTPUT_BUCKET:-}
+      S3_BUCKET: ${S3_BUCKET:-}
     volumes:
       - app_data:/data
     restart: unless-stopped
@@ -64,14 +70,14 @@ services:
       dockerfile: docker/Dockerfile
     command: ["python", "-m", "streaming.spark_job", "--local-consumer"]
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DATA_DIR: /data
       AWS_REGION: ${AWS_REGION:-}
-      S3_INPUT_BUCKET: ${S3_INPUT_BUCKET:-}
-      S3_OUTPUT_BUCKET: ${S3_OUTPUT_BUCKET:-}
+      S3_BUCKET: ${S3_BUCKET:-}
     volumes:
       - app_data:/data
     restart: unless-stopped

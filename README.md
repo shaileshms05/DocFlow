@@ -4,8 +4,8 @@ This project implements a scalable multi-modal document intelligence system usin
 
 ## Architecture (high level)
 
-1. **Upload** — `POST /upload` saves the file (local or S3), writes an **ingest** manifest JSON to **`S3_OUTPUT_BUCKET`** (prefix `ingest/`) or `data/ingest/`, emits to Kafka `document_uploads`.
-2. **Stream processing** — Consumer reads `document_uploads`, loads `file_path`, runs OCR + extraction, writes **processed** JSON to **`S3_OUTPUT_BUCKET`** (`processed/`) or `data/processed/`, updates ingest manifest with `processed_uri`, emits to `processed_documents`.
+1. **Upload** — `POST /upload` saves the file (local or S3), writes an **ingest** manifest to **`S3_BUCKET`** at prefix **`ingest/`** (or `data/ingest/`), emits to Kafka `document_uploads`.
+2. **Stream processing** — Consumer reads `document_uploads`, loads `file_path`, writes **processed** JSON to the **same bucket** at **`processed/`**, updates **`ingest/`** with `processed_uri`, emits to `processed_documents`.
 3. **Feedback** — `POST /feedback` writes JSON to **`feedback/`** on the output bucket (or `data/feedback/`) and optionally emits to `feedback_events`.
 4. **Training** — `python -m ml.train` lists processed objects from S3 (or local disk), merges `doc_type` overrides from stored feedback, logs to MLflow (SQLite backend in Docker).
 5. **Serving** — `ml.predict` loads the latest **Production**/**Staging** model from the MLflow Model Registry when available; otherwise falls back to rules.
@@ -36,7 +36,7 @@ cd document-intelligence-system
 pip install -r requirements.txt
 ```
 
-3. Start **Kafka** (or use Docker Compose below). For production-style runs, set **`S3_OUTPUT_BUCKET`** (and **`S3_INPUT_BUCKET`** if uploads go to S3).
+3. Start **Kafka** (or use Docker Compose below). For S3, set **`S3_BUCKET`** and **`AWS_REGION`** (one bucket; paths `raw/`, `processed/`, `ingest/`, `feedback/`).
 4. Set **`KAFKA_BOOTSTRAP_SERVERS`**, **`MLFLOW_TRACKING_URI`**, and AWS vars as needed.
 5. Run the API:
 
@@ -58,10 +58,7 @@ python -m streaming.spark_job --local-consumer
 curl -s -X POST "http://localhost:8000/upload" -F "file=@/path/to/resume.pdf" -F "doc_type=unknown"
 ```
 
-For **S3 → Kafka → worker**, set raw uploads to S3 without switching the whole app to `storage.backend: s3`:
-
-- **`S3_INPUT_BUCKET`** (or `storage.s3_input_bucket` in `config.yaml`) — uploads go to `s3://<bucket>/<s3_raw_prefix>/…`; the Kafka payload carries that URI for the consumer to `GetObject`.
-- Or use **`STORAGE_BACKEND=s3`** and **`S3_BUCKET`** as before.
+For **S3 → Kafka → worker**, set **`S3_BUCKET`** (and `AWS_REGION`). Uploads go to `s3://<bucket>/<s3_raw_prefix>/…` (default `raw/`). Legacy env vars **`S3_OUTPUT_BUCKET`** / **`S3_INPUT_BUCKET`** still resolve to the same bucket if **`S3_BUCKET`** is unset.
 
 Open **`http://localhost:8000/docs`** for the interactive OpenAPI UI.
 
@@ -89,7 +86,7 @@ cd docker
 docker compose up --build
 ```
 
-This starts **Zookeeper**, **Kafka**, **MLflow** (tracking DB = **SQLite** on volume `mlflow_data`), **API**, and **consumer** (`python -m streaming.spark_job --local-consumer`). **No Postgres.** Pass **`S3_OUTPUT_BUCKET`** / **`S3_INPUT_BUCKET`** / **`AWS_REGION`** via environment or a `docker/.env` file so outputs land in S3; otherwise processed files use the shared **`app_data`** volume at `/data`.
+This starts **Zookeeper**, **Kafka**, **MLflow** (SQLite on `mlflow_data`), **API**, and **consumer**. **No Postgres.** Set **`S3_BUCKET`** and **`AWS_REGION`** in `docker/.env` (or on the host) for one-bucket storage; otherwise everything uses the **`app_data`** volume at `/data`.
 
 | Service   | URL / port |
 |-----------|------------|
@@ -111,25 +108,27 @@ docker compose exec consumer python -m ml.train --register --stage Staging
 
 Spark JVM is still optional: the Compose stack uses the lightweight Kafka consumer. For a full Spark job, run `spark-submit` on a cluster or add a Spark image separately; see `streaming/spark_job.py`.
 
-### S3 output bucket (processed JSON + feedback)
+### S3 (single bucket, path prefixes)
 
-To land **extraction results** and **feedback events** in a **dedicated S3 bucket** (separate from raw uploads), set `s3_output.bucket` in `config/config.yaml` or export **`S3_OUTPUT_BUCKET`**.
+Set **`S3_BUCKET`** (or `storage.s3_bucket` in `config.yaml`). The repo default bucket name is **`doc-flow-bucket`**; change it in YAML or env for other environments. All objects use that one bucket:
 
-- **Processed documents** — `s3://<bucket>/<processed_prefix>/<doc_id>.json` (default `processed/`). Training lists this prefix (no database).
-- **Feedback** — `s3://<bucket>/<feedback_prefix>/<event_id>.json` (default `feedback/`).
-- **Ingest audit** — `s3://<bucket>/<ingest_prefix>/<doc_id>.json` (default `ingest/`) for queued/processed pipeline state.
+| Prefix (configurable) | Contents |
+|----------------------|----------|
+| `raw/` (`storage.s3_raw_prefix`) | Uploaded PDFs / images |
+| `processed/` | Extraction JSON |
+| `ingest/` | Upload / pipeline audit |
+| `feedback/` | Feedback events |
 
-Override prefixes with `s3_output.processed_prefix` / `s3_output.feedback_prefix`. The app uses the **default AWS credential chain** (env keys, `~/.aws/credentials`, or an **EC2 instance profile** / **ECS task role**). Grant `s3:PutObject` (and `s3:GetObject` for training reads) on that bucket.
+IAM: `s3:PutObject`, `s3:GetObject`, `s3:ListBucket` on `arn:aws:s3:::<bucket>` and `arn:aws:s3:::<bucket>/*`.
 
-In Docker Compose, add for `api` and `consumer`, for example:
+`docker/.env` (copy from `docker/.env.example`):
 
-```yaml
-environment:
-  S3_OUTPUT_BUCKET: your-doc-intel-output
-  AWS_REGION: us-east-1
+```env
+S3_BUCKET=doc-flow-bucket
+AWS_REGION=eu-north-1
 ```
 
-(Omit `S3_OUTPUT_BUCKET` for local-only disk storage.)
+Legacy **`S3_OUTPUT_BUCKET`** / **`S3_INPUT_BUCKET`** are still read if **`S3_BUCKET`** is empty (they should point at the **same** bucket for this layout).
 
 ## Running on AWS EC2
 
@@ -201,7 +200,7 @@ Optional: attach an **Elastic IP** for a stable public address, and terminate **
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Pull requests to **`main`** | `pip install -r requirements.txt` + `python -m compileall` |
 | [`.github/workflows/deploy-ec2.yml`](.github/workflows/deploy-ec2.yml) | Push to **`main`**, or **Run workflow** | Runs **verify** first, then SSH deploy |
 
-**Deploy** SSHs to EC2, runs **`git fetch` / `reset --hard`** in your deploy directory, optionally writes **`docker/.env`**, then **`docker compose … up`**. That directory **must be a `git clone`** (it must contain **`.git`**). A folder you created with `scp` or “copy project” will fail with `fatal: not a git repository` — fix by cloning once on the server, e.g. `git clone https://github.com/<you>/<repo>.git ~/document-intelligence-system`, and set **`EC2_DEPLOY_PATH`** if you use a different path.
+**Deploy** SSHs to EC2, runs **`git fetch` / `reset --hard`**, then **`docker compose`**. The instance must have **Docker Engine** and the **Compose v2 plugin** (`docker compose`). If the workflow fails with **`docker: command not found`**, install once over SSH: `curl -fsSL https://get.docker.com | sudo sh`, then `sudo usermod -aG docker $USER` and **log out and back in** (or use `scripts/ec2-bootstrap.sh`). The deploy directory **must be a `git clone`** (contain **`.git`**).
 
 **Repository secrets** (Settings → Secrets and variables → Actions):
 
@@ -212,7 +211,7 @@ Optional: attach an **Elastic IP** for a stable public address, and terminate **
 | `EC2_SSH_PRIVATE_KEY` | Yes | Private key for `authorized_keys` on the instance (use a **deploy-only** key) |
 | `EC2_DEPLOY_PATH` | No | Absolute path to the repo (default: `/home/<EC2_USERNAME>/document-intelligence-system`) |
 | `EC2_SSH_PORT` | No | SSH port (default `22`) |
-| `EC2_DOCKER_ENV` | No | Multiline contents for **`docker/.env`** on the server, e.g. `S3_OUTPUT_BUCKET=...`, `S3_INPUT_BUCKET=...`, `AWS_REGION=...` (no quotes needed for simple values). Omit if you manage `.env` only on the instance. |
+| `EC2_DOCKER_ENV` | No | Multiline **`docker/.env`**, e.g. `S3_BUCKET=...`, `AWS_REGION=...`. Omit if you manage `.env` only on the instance. |
 
 **SSH from GitHub-hosted runners:** Allow **SSH** from [GitHub `actions` IP ranges](https://api.github.com/meta), or use a **bastion / VPN**, or a **self-hosted** runner on EC2.
 

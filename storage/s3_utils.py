@@ -29,10 +29,28 @@ def _env_override(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
 
-def _s3_output_bucket() -> str:
+def _s3_bucket() -> str:
+    """
+    Single S3 bucket for raw uploads, processed JSON, ingest manifests, and feedback.
+    Prefixes separate paths (raw/, processed/, ingest/, feedback/).
+
+    Resolution order: S3_BUCKET env → storage.s3_bucket → S3_OUTPUT_BUCKET → s3_output.bucket
+    → S3_INPUT_BUCKET → storage.s3_input_bucket (legacy two-bucket setups).
+    """
     cfg = load_config()
+    st = cfg.get("storage") or {}
     out = cfg.get("s3_output") or {}
-    return _env_override("S3_OUTPUT_BUCKET", out.get("bucket") or "").strip()
+    for val in (
+        _env_override("S3_BUCKET", "").strip(),
+        (st.get("s3_bucket") or "").strip(),
+        _env_override("S3_OUTPUT_BUCKET", "").strip(),
+        (out.get("bucket") or "").strip(),
+        _env_override("S3_INPUT_BUCKET", "").strip(),
+        (st.get("s3_input_bucket") or "").strip(),
+    ):
+        if val:
+            return val
+    return ""
 
 
 def _s3_output_prefix(kind: str) -> str:
@@ -82,7 +100,7 @@ def save_ingest_manifest(
     if processed_uri:
         body["processed_uri"] = processed_uri
     raw = json.dumps(body, indent=2).encode("utf-8")
-    bucket = _s3_output_bucket()
+    bucket = _s3_bucket()
     if bucket:
         prefix = _s3_output_prefix("ingest")
         key = f"{prefix}/{doc_id}.json" if prefix else f"{doc_id}.json"
@@ -111,7 +129,7 @@ def iter_processed_payloads() -> List[dict]:
     """All processed extraction JSON objects (S3 output bucket or local processed/)."""
     import json
 
-    bucket = _s3_output_bucket()
+    bucket = _s3_bucket()
     out: List[dict] = []
     if bucket:
         import boto3
@@ -146,7 +164,7 @@ def iter_feedback_payloads() -> List[dict]:
     """Feedback events from S3 feedback prefix or local data/feedback/."""
     import json
 
-    bucket = _s3_output_bucket()
+    bucket = _s3_bucket()
     out: List[dict] = []
     if bucket:
         import boto3
@@ -184,7 +202,7 @@ def save_feedback_to_output(event: Dict[str, Any]) -> str:
 
     eid = event.get("event_id") or str(uuid.uuid4())
     body = json.dumps(event, indent=2).encode("utf-8")
-    bucket = _s3_output_bucket()
+    bucket = _s3_bucket()
     if bucket:
         prefix = _s3_output_prefix("feedback")
         key = f"{prefix}/{eid}.json" if prefix else f"{eid}.json"
@@ -200,11 +218,10 @@ def save_upload(file_content: bytes, original_filename: str) -> Tuple[str, str]:
     """
     Persist raw bytes. Returns (logical_uri, doc_id).
 
-    S3 is used when, in order:
-    1. ``S3_INPUT_BUCKET`` or ``storage.s3_input_bucket`` is set (raw uploads to S3 even if backend is local), or
-    2. ``storage.backend`` is ``s3`` and ``S3_BUCKET`` / ``s3_bucket`` is set.
+    If ``_s3_bucket()`` is non-empty (``S3_BUCKET`` or legacy env/yaml), uploads go to
+    ``s3://<bucket>/<s3_raw_prefix>/<doc_id>.<ext>``.
 
-    Otherwise writes under ``data_dir`` / ``local_raw_prefix``.
+    Otherwise ``storage.backend`` may force S3 via ``s3_bucket`` only, or local ``data_dir/raw``.
     """
     cfg = load_config()
     st = cfg["storage"]
@@ -213,14 +230,7 @@ def save_upload(file_content: bytes, original_filename: str) -> Tuple[str, str]:
     safe_name = f"{doc_id}{ext}"
 
     backend = _env_override("STORAGE_BACKEND", st["backend"])
-    input_bucket = _env_override("S3_INPUT_BUCKET", st.get("s3_input_bucket") or "").strip()
-    primary_bucket = _env_override("S3_BUCKET", st.get("s3_bucket") or "").strip()
-
-    bucket = ""
-    if input_bucket:
-        bucket = input_bucket
-    elif backend == "s3":
-        bucket = primary_bucket
+    bucket = _s3_bucket()
 
     if bucket:
         prefix = st["s3_raw_prefix"].strip("/")
@@ -235,7 +245,7 @@ def save_upload(file_content: bytes, original_filename: str) -> Tuple[str, str]:
         return uri, doc_id
 
     if backend == "s3" and not bucket:
-        raise ValueError("storage.backend is s3 but no bucket configured (S3_BUCKET or s3_bucket)")
+        raise ValueError("storage.backend is s3 but no bucket (set S3_BUCKET or storage.s3_bucket)")
 
     data_dir = Path(_env_override("DATA_DIR", cfg["app"]["data_dir"])).resolve()
     raw = data_dir / cfg["storage"]["local_raw_prefix"]
@@ -267,11 +277,7 @@ def read_file_bytes(uri: str) -> bytes:
 def save_processed_json(doc_id: str, payload: dict) -> str:
     """
     Write processed extraction JSON; returns canonical URI.
-
-    If ``s3_output.bucket`` (or env ``S3_OUTPUT_BUCKET``) is set, the artifact is stored
-    there and that s3:// URI is returned.
-
-    Otherwise: existing behavior — local disk or primary ``storage.s3_bucket`` processed prefix.
+    Uses ``_s3_bucket()`` + ``processed`` prefix, or local ``data/processed``.
     """
     import json
 
@@ -279,27 +285,27 @@ def save_processed_json(doc_id: str, payload: dict) -> str:
     cfg = load_config()
     name = f"{doc_id}.json"
 
-    out_bucket = _s3_output_bucket()
+    out_bucket = _s3_bucket()
     if out_bucket:
         try:
             import boto3  # noqa: F401
         except ImportError as e:
-            raise RuntimeError("boto3 required for S3 output bucket") from e
+            raise RuntimeError("boto3 required for S3") from e
         prefix = _s3_output_prefix("processed")
         key = f"{prefix}/{name}" if prefix else name
         return _put_s3_json(out_bucket, key, body)
 
     backend = _env_override("STORAGE_BACKEND", cfg["storage"]["backend"])
     if backend == "s3":
-        bucket = _env_override("S3_BUCKET", cfg["storage"]["s3_bucket"])
+        b = (cfg["storage"].get("s3_bucket") or "").strip()
+        if not b:
+            raise ValueError("storage.backend is s3 but no S3_BUCKET configured")
         proc_prefix = cfg["storage"]["s3_processed_prefix"].strip("/")
         key = f"{proc_prefix}/{name}" if proc_prefix else name
         import boto3
 
-        boto3.client("s3").put_object(
-            Bucket=bucket, Key=key, Body=body, ContentType="application/json"
-        )
-        return f"s3://{bucket}/{key}"
+        boto3.client("s3").put_object(Bucket=b, Key=key, Body=body, ContentType="application/json")
+        return f"s3://{b}/{key}"
 
     data_dir = Path(_env_override("DATA_DIR", cfg["app"]["data_dir"])).resolve()
     proc = data_dir / cfg["storage"]["local_processed_prefix"]

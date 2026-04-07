@@ -111,23 +111,37 @@ def run_spark_streaming():
 
 
 def run_local_kafka_consumer():
-    """Minimal consumer without Spark (dev / CI)."""
+    """Minimal consumer without Spark (dev / CI). Waits for brokers if they start slowly."""
+    import time
+
     import yaml
     from kafka import KafkaConsumer
+    from kafka.errors import NoBrokersAvailable
 
     with open(_ROOT / "config" / "config.yaml", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     k = cfg["kafka"]
     bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", k["bootstrap_servers"])
     topic = os.environ.get("KAFKA_TOPIC_UPLOADS", k["topic_document_uploads"])
-    consumer = KafkaConsumer(
-        topic,
-        bootstrap_servers=bootstrap.split(","),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="doc-intel-local",
-        value_deserializer=lambda b: b.decode("utf-8") if b else None,
-    )
+
+    consumer = None
+    for attempt in range(60):
+        try:
+            consumer = KafkaConsumer(
+                topic,
+                bootstrap_servers=bootstrap.split(","),
+                auto_offset_reset="earliest",
+                enable_auto_commit=True,
+                group_id="doc-intel-local",
+                value_deserializer=lambda b: b.decode("utf-8") if b else None,
+                request_timeout_ms=15000,
+            )
+            break
+        except NoBrokersAvailable:
+            if attempt == 59:
+                raise
+            time.sleep(2)
+    assert consumer is not None
     print(f"Listening on {topic} @ {bootstrap}")
     for msg in consumer:
         if not msg.value:

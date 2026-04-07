@@ -1,5 +1,10 @@
-# Document Intelligence System — central configuration
-# Override any value with environment variables (UPPER_SNAKE_CASE), e.g. KAFKA_BOOTSTRAP_SERVERS
+# Central configuration. Env overrides: S3_BUCKET, AWS_REGION, KAFKA_BOOTSTRAP_SERVERS, etc.
+#
+# Single S3 bucket — separate prefixes (no second bucket):
+#   raw/        — PDF uploads (storage.s3_raw_prefix)
+#   processed/  — extraction JSON (s3_output.processed_prefix)
+#   ingest/     — pipeline audit (s3_output.ingest_prefix)
+#   feedback/   — feedback events (s3_output.feedback_prefix)
 
 app:
   host: "0.0.0.0"
@@ -7,19 +12,17 @@ app:
   data_dir: "./data"
 
 storage:
-  backend: "local"  # local | s3
+  backend: "local"  # local | s3  (s3 requires storage.s3_bucket or env S3_BUCKET)
   local_raw_prefix: "raw"
   local_processed_prefix: "processed"
-  s3_bucket: ""
-  # Raw uploads go here when set (or env S3_INPUT_BUCKET), even if backend is local — typical S3 → Kafka flow.
-  s3_input_bucket: ""
+  # Default bucket (override with env S3_BUCKET). Legacy: S3_OUTPUT_BUCKET / S3_INPUT_BUCKET still work.
+  s3_bucket: "doc-flow-bucket"
   s3_raw_prefix: "raw"
   s3_processed_prefix: "processed"
 
-# Output bucket: processed JSON, feedback events, optional ingest audit (no database).
-# Set S3_OUTPUT_BUCKET (or bucket below). Uses default AWS credential chain.
+# Prefixes inside the same bucket as storage.s3_bucket / S3_BUCKET
 s3_output:
-  bucket: ""
+  bucket: ""  # optional duplicate of s3_bucket for YAML-only setups; prefer storage.s3_bucket
   processed_prefix: "processed"
   feedback_prefix: "feedback"
   ingest_prefix: "ingest"
@@ -40,7 +43,7 @@ spark:
   app_name: "DocumentIntelligenceStream"
 
 ocr:
-  tesseract_cmd: ""  # leave empty for PATH default
+  tesseract_cmd: ""
   language: "eng"
 
 training:
