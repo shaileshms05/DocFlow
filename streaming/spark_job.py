@@ -24,12 +24,10 @@ if str(_ROOT) not in sys.path:
 def process_upload_event(event: dict) -> dict:
     """Single-document pipeline: load file, OCR, extract, persist, return payload."""
     from ingestion.kafka_producer import get_producer
-    from storage.db import get_session_factory, init_db, mark_processed
-    from storage.s3_utils import load_config, read_file_bytes, save_processed_json
+    from storage.s3_utils import load_config, read_file_bytes, save_processed_json, save_ingest_manifest
     from streaming.extractor import build_result_payload
     from streaming.ocr import extract_text_from_bytes
 
-    init_db()
     doc_id = event["doc_id"]
     file_path = event["file_path"]
     doc_type = event.get("doc_type") or "unknown"
@@ -40,13 +38,16 @@ def process_upload_event(event: dict) -> dict:
     text, _boxes = extract_text_from_bytes(raw, suffix=suffix)
     payload = build_result_payload(doc_id, text, doc_type if doc_type != "unknown" else None)
     json_uri = save_processed_json(doc_id, payload)
-
-    mark_processed(
-        get_session_factory()(),
-        doc_id=doc_id,
-        json_uri=json_uri,
-        summary={"doc_type": payload["doc_type"], "confidence": payload["confidence"]},
-    )
+    try:
+        save_ingest_manifest(
+            doc_id,
+            file_path,
+            doc_type,
+            status="processed",
+            processed_uri=json_uri,
+        )
+    except Exception:
+        pass
 
     cfg = load_config()["kafka"]
     topic_out = os.environ.get("KAFKA_TOPIC_PROCESSED", cfg["topic_processed_documents"])

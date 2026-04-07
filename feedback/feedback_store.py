@@ -1,58 +1,19 @@
-"""Store feedback events (DB + optional Kafka emit)."""
+"""Feedback events: S3 (or local data/feedback); optional Kafka emit. No database."""
 
 from __future__ import annotations
 
 import json
 import os
 import uuid
-from datetime import datetime
-from typing import Any, List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional
 
-import yaml
-from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
-
-Base = declarative_base()
-
-
-class FeedbackEvent(Base):
-    __tablename__ = "feedback_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_id = Column(String(64), unique=True, nullable=False)
-    doc_id = Column(String(64), nullable=False, index=True)
-    field = Column(String(128), nullable=False)
-    predicted = Column(Text, nullable=True)
-    actual = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-def _root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _db_url() -> str:
-    with open(os.path.join(_root(), "config", "config.yaml"), encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return os.environ.get("DATABASE_URL", cfg["database"]["url"])
-
-
-_engine = None
-_SessionLocal = None
-
-
-def _get_session_factory():
-    global _engine, _SessionLocal
-    if _SessionLocal is None:
-        _engine = create_engine(_db_url(), pool_pre_ping=True)
-        Base.metadata.create_all(bind=_engine)
-        _SessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
-    return _SessionLocal
+from storage.s3_utils import save_feedback_to_output
 
 
 def init_feedback_tables():
-    engine = create_engine(_db_url(), pool_pre_ping=True)
-    Base.metadata.create_all(bind=engine)
+    """Legacy no-op (previously SQLAlchemy)."""
+    return
 
 
 def record_feedback(
@@ -69,24 +30,15 @@ def record_feedback(
         "field": field,
         "predicted": predicted,
         "actual": actual,
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat(),
     }
-    SessionLocal = _get_session_factory()
-    with SessionLocal() as session:
-        session.add(
-            FeedbackEvent(
-                event_id=event_id,
-                doc_id=doc_id,
-                field=field,
-                predicted=predicted or "",
-                actual=actual,
-            )
-        )
-        session.commit()
+    save_feedback_to_output(event)
     if emit_kafka:
         try:
             import sys
             from pathlib import Path
+
+            import yaml
 
             root = Path(__file__).resolve().parent.parent
             if str(root) not in sys.path:
@@ -94,7 +46,7 @@ def record_feedback(
             from ingestion.kafka_producer import get_producer
 
             prod = get_producer()
-            with open(os.path.join(_root(), "config", "config.yaml"), encoding="utf-8") as f:
+            with open(root / "config" / "config.yaml", encoding="utf-8") as f:
                 topic = yaml.safe_load(f)["kafka"]["topic_feedback_events"]
             prod.send(
                 topic,
@@ -103,23 +55,22 @@ def record_feedback(
             )
             prod.flush()
         except Exception:
-            pass  # Kafka optional for local tests
+            pass
     return event
 
 
 def list_feedback_for_training(limit: Optional[int] = None) -> List[dict]:
-    SessionLocal = _get_session_factory()
-    with SessionLocal() as session:
-        q = session.query(FeedbackEvent).order_by(FeedbackEvent.created_at.asc())
-        if limit:
-            q = q.limit(limit)
-        rows = q.all()
+    from storage.s3_utils import iter_feedback_payloads
+
+    rows = sorted(iter_feedback_payloads(), key=lambda r: r.get("ts") or "")
+    if limit:
+        rows = rows[:limit]
     return [
         {
-            "doc_id": r.doc_id,
-            "field": r.field,
-            "predicted": r.predicted,
-            "actual": r.actual,
+            "doc_id": r["doc_id"],
+            "field": r["field"],
+            "predicted": r.get("predicted"),
+            "actual": r["actual"],
         }
         for r in rows
     ]

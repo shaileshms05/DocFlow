@@ -11,17 +11,24 @@ storage:
   local_raw_prefix: "raw"
   local_processed_prefix: "processed"
   s3_bucket: ""
+  # Raw uploads go here when set (or env S3_INPUT_BUCKET), even if backend is local — typical S3 → Kafka flow.
+  s3_input_bucket: ""
   s3_raw_prefix: "raw"
   s3_processed_prefix: "processed"
+
+# Output bucket: processed JSON, feedback events, optional ingest audit (no database).
+# Set S3_OUTPUT_BUCKET (or bucket below). Uses default AWS credential chain.
+s3_output:
+  bucket: ""
+  processed_prefix: "processed"
+  feedback_prefix: "feedback"
+  ingest_prefix: "ingest"
 
 kafka:
   bootstrap_servers: "localhost:9092"
   topic_document_uploads: "document_uploads"
   topic_processed_documents: "processed_documents"
   topic_feedback_events: "feedback_events"
-
-database:
-  url: "postgresql+psycopg2://docintel:docintel@localhost:5432/docintel"
 
 mlflow:
   tracking_uri: "http://localhost:5000"

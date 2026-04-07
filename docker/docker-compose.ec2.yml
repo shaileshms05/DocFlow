@@ -1,8 +1,7 @@
-# Full stack in Docker (from this folder):
-#   docker compose up --build
-# API :8000 · MLflow :5000 · Kafka :9092 (host)
-# No Postgres — metadata + outputs use S3 (set S3_OUTPUT_BUCKET) or local /data volume.
-# For a public EC2 host, use docker-compose.ec2.yml.
+# EC2: internal Kafka only; API on :8000; MLflow on 127.0.0.1:5000.
+# No Postgres — use S3_OUTPUT_BUCKET (+ S3_INPUT_BUCKET for raw uploads) with IAM role on EC2.
+#
+#   docker compose -f docker-compose.ec2.yml up -d --build
 
 name: document-intelligence
 
@@ -12,28 +11,24 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     depends_on:
       - zookeeper
-    ports:
-      - "9092:9092"
-      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   mlflow:
     image: python:3.11-slim
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |

@@ -1,4 +1,4 @@
-"""FastAPI: document upload, health, and feedback endpoints."""
+"""FastAPI: upload file → S3 (or local) → Kafka ``document_uploads`` → downstream OCR/extraction."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
-# Ensure project root on path for `storage`, `feedback`, etc.
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -18,10 +18,34 @@ from pydantic import BaseModel, Field
 
 from feedback.feedback_store import record_feedback
 from ingestion.kafka_producer import close_producer, get_producer
-from storage.db import get_session_factory, init_db, upsert_document
-from storage.s3_utils import load_config, save_upload
+from storage.s3_utils import load_config, save_ingest_manifest, save_upload
 
-app = FastAPI(title="Document Intelligence Ingestion", version="0.1.0")
+app = FastAPI(
+    title="Document Intelligence Ingestion",
+    version="0.3.0",
+    description=(
+        "**Flow:** `POST /upload` stores the file (S3 when configured, else local), writes an optional **ingest** "
+        "manifest JSON to `S3_OUTPUT_BUCKET` (prefix `ingest/`) or `data/ingest/`, then publishes to Kafka "
+        "`document_uploads`. The consumer loads `file_path`, runs OCR + extraction, and writes **processed** JSON "
+        "to the output bucket (or local `data/processed/`)."
+    ),
+)
+
+
+class UploadResponse(BaseModel):
+    doc_id: str
+    file_path: str
+    doc_type: str
+    storage: Literal["s3", "local"]
+    kafka_topic: str
+    status: str = Field("queued", description="Recorded in S3 ingest manifest or local data/ingest")
+
+
+class FeedbackBody(BaseModel):
+    doc_id: str
+    field: str
+    predicted: str | None = None
+    actual: str
 
 
 def _kafka_topics():
@@ -31,13 +55,7 @@ def _kafka_topics():
 
 @app.on_event("startup")
 def startup():
-    init_db()
-    try:
-        from feedback.feedback_store import init_feedback_tables
-
-        init_feedback_tables()
-    except Exception:
-        pass
+    return
 
 
 @app.on_event("shutdown")
@@ -50,49 +68,57 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/upload")
+@app.post("/upload", response_model=UploadResponse, tags=["ingest"])
 async def upload(
-    file: UploadFile = File(...),
-    doc_type: str = Form("unknown"),
+    file: UploadFile = File(..., description="PDF or image"),
+    doc_type: str = Form("unknown", description="Hint: resume | invoice | kyc | unknown"),
 ):
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "empty file")
-    file_uri, doc_id = save_upload(raw, file.filename or "upload.bin")
-    upsert_document(
-        get_session_factory()(),
-        doc_id=doc_id,
-        file_uri=file_uri,
-        doc_type_hint=doc_type if doc_type != "unknown" else None,
-        status="queued",
-    )
+    try:
+        file_uri, doc_id = save_upload(raw, file.filename or "upload.bin")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(503, str(e)) from e
+
+    storage_kind: Literal["s3", "local"] = "s3" if file_uri.startswith("s3://") else "local"
+
+    try:
+        save_ingest_manifest(doc_id, file_uri, doc_type, status="queued")
+    except Exception:
+        pass
+
+    topics = _kafka_topics()
+    topic_uploads = topics["topic_document_uploads"]
     event = {
         "doc_id": doc_id,
         "file_path": file_uri,
         "doc_type": doc_type,
     }
-    topics = _kafka_topics()
     try:
         prod = get_producer()
         prod.send(
-            topics["topic_document_uploads"],
+            topic_uploads,
             key=doc_id.encode("utf-8"),
             value=json.dumps(event).encode("utf-8"),
         )
         prod.flush()
     except Exception as e:
         raise HTTPException(503, f"kafka unavailable: {e}") from e
-    return event
+
+    return UploadResponse(
+        doc_id=doc_id,
+        file_path=file_uri,
+        doc_type=doc_type,
+        storage=storage_kind,
+        kafka_topic=topic_uploads,
+        status="queued",
+    )
 
 
-class FeedbackBody(BaseModel):
-    doc_id: str = Field(..., description="Document UUID")
-    field: str
-    predicted: str | None = None
-    actual: str
-
-
-@app.post("/feedback")
+@app.post("/feedback", tags=["feedback"])
 def submit_feedback(body: FeedbackBody):
     ev = record_feedback(
         body.doc_id,
