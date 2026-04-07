@@ -1,10 +1,10 @@
-# Python compile + dependency install on pull requests to main/master.
+# Python compile + dependency install on pull requests to main.
 
 name: CI
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 permissions:
   contents: read

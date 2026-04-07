@@ -198,8 +198,8 @@ Optional: attach an **Elastic IP** for a stable public address, and terminate **
 
 | Workflow | When | What |
 |----------|------|------|
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Pull requests to `main` / `master` | `pip install -r requirements.txt` + `python -m compileall` |
-| [`.github/workflows/deploy-ec2.yml`](.github/workflows/deploy-ec2.yml) | Push to `main` / `master`, or **Run workflow** | Runs **verify** first, then SSH deploy |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Pull requests to **`main`** | `pip install -r requirements.txt` + `python -m compileall` |
+| [`.github/workflows/deploy-ec2.yml`](.github/workflows/deploy-ec2.yml) | Push to **`main`**, or **Run workflow** | Runs **verify** first, then SSH deploy |
 
 **Deploy** checks out the pushed branch on the server, optionally writes **`docker/.env`** from a secret, then **`docker compose -f docker-compose.ec2.yml build --pull`** and **`up -d`**.
 
