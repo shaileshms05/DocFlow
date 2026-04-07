@@ -1,0 +1,7 @@
+CREATE USER docintel WITH PASSWORD 'docintel';
+CREATE DATABASE docintel OWNER docintel;
+GRANT ALL PRIVILEGES ON DATABASE docintel TO docintel;
+
+CREATE USER mlflow WITH PASSWORD 'mlflow';
+CREATE DATABASE mlflow OWNER mlflow;
+GRANT ALL PRIVILEGES ON DATABASE mlflow TO mlflow;

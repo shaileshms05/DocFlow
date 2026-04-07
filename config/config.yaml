@@ -1,0 +1,41 @@
+# Document Intelligence System — central configuration
+# Override any value with environment variables (UPPER_SNAKE_CASE), e.g. KAFKA_BOOTSTRAP_SERVERS
+
+app:
+  host: "0.0.0.0"
+  port: 8000
+  data_dir: "./data"
+
+storage:
+  backend: "local"  # local | s3
+  local_raw_prefix: "raw"
+  local_processed_prefix: "processed"
+  s3_bucket: ""
+  s3_raw_prefix: "raw"
+  s3_processed_prefix: "processed"
+
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topic_document_uploads: "document_uploads"
+  topic_processed_documents: "processed_documents"
+  topic_feedback_events: "feedback_events"
+
+database:
+  url: "postgresql+psycopg2://docintel:docintel@localhost:5432/docintel"
+
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_name: "document-intelligence"
+  registered_model_name: "doc_type_classifier"
+
+spark:
+  master: "local[*]"
+  app_name: "DocumentIntelligenceStream"
+
+ocr:
+  tesseract_cmd: ""  # leave empty for PATH default
+  language: "eng"
+
+training:
+  model_dir: "./data/models"
+  min_feedback_samples: 5

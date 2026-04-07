@@ -1,0 +1,83 @@
+# Run from repo root: docker compose -f docker/docker-compose.yml up --build
+# Services: API, Kafka, Zookeeper, PostgreSQL, MLflow
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+
+  mlflow:
+    image: python:3.11-slim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        pip install --no-cache-dir -q mlflow==2.10.2 psycopg2-binary &&
+        exec mlflow server --host 0.0.0.0 --port 5000 \
+          --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow \
+          --default-artifact-root file:///mlflow/artifacts
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql+psycopg2://docintel:docintel@postgres:5432/docintel
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DATA_DIR: /data
+    volumes:
+      - app_data:/data
+
+volumes:
+  pg_data:
+  mlflow_artifacts:
+  app_data:
