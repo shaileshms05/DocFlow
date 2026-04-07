@@ -73,19 +73,36 @@ export PYTHONPATH="$(pwd)"
 python -m ml.train --register --stage Staging
 ```
 
-## Docker Compose
+## Run everything in Docker (recommended)
 
 From `document-intelligence-system/docker`:
 
 ```bash
+cd docker
 docker compose up --build
 ```
 
-- API: `http://localhost:8000`
-- MLflow UI: `http://localhost:5000`
-- Kafka (host): `localhost:9092` (use `kafka:29092` from other containers)
+This starts **Zookeeper**, **Kafka**, **PostgreSQL**, **MLflow**, the **FastAPI** app, and a **`consumer`** container that runs `python -m streaming.spark_job --local-consumer` (OCR + extraction + DB + `processed_documents` topic). The API and consumer share the **`app_data`** volume at `/data`, so uploads written by the API are visible to the worker.
 
-Spark is not bundled in Compose (image size and JVM); use `spark-submit` with the Kafka package as documented in `streaming/spark_job.py`, or the `--local-consumer` mode for MVP demos.
+| Service   | URL / port |
+|-----------|------------|
+| API       | `http://localhost:8000` |
+| MLflow UI | `http://localhost:5000` |
+| Kafka     | `localhost:9092` from your machine; `kafka:29092` inside the Compose network |
+
+**Upload from the host** (same as local quick start):
+
+```bash
+curl -s -X POST "http://localhost:8000/upload" -F "file=@/path/to/resume.pdf" -F "doc_type=unknown"
+```
+
+**Train inside Docker** (after enough documents are processed; MLflow and Postgres must be reachable):
+
+```bash
+docker compose exec consumer python -m ml.train --register --stage Staging
+```
+
+Spark JVM is still optional: the Compose stack uses the lightweight Kafka consumer. For a full Spark job, run `spark-submit` on a cluster or add a Spark image separately; see `streaming/spark_job.py`.
 
 ## Kafka topics
 

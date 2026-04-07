@@ -1,5 +1,7 @@
-# Run from repo root: docker compose -f docker/docker-compose.yml up --build
-# Services: API, Kafka, Zookeeper, PostgreSQL, MLflow
+# Full stack in Docker (from this folder):
+#   docker compose up --build
+# API :8000 · MLflow :5000 · Kafka :9092 (host)
+# The consumer service runs OCR + extraction inside Docker (shared /data with API).
 
 services:
   zookeeper:
@@ -76,6 +78,26 @@ services:
       DATA_DIR: /data
     volumes:
       - app_data:/data
+    restart: unless-stopped
+
+  consumer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "streaming.spark_job", "--local-consumer"]
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql+psycopg2://docintel:docintel@postgres:5432/docintel
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DATA_DIR: /data
+    volumes:
+      - app_data:/data
+    restart: unless-stopped
 
 volumes:
   pg_data:
