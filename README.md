@@ -201,7 +201,7 @@ Optional: attach an **Elastic IP** for a stable public address, and terminate **
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Pull requests to **`main`** | `pip install -r requirements.txt` + `python -m compileall` |
 | [`.github/workflows/deploy-ec2.yml`](.github/workflows/deploy-ec2.yml) | Push to **`main`**, or **Run workflow** | Runs **verify** first, then SSH deploy |
 
-**Deploy** checks out the pushed branch on the server, optionally writes **`docker/.env`** from a secret, then **`docker compose -f docker-compose.ec2.yml build --pull`** and **`up -d`**.
+**Deploy** SSHs to EC2, runs **`git fetch` / `reset --hard`** in your deploy directory, optionally writes **`docker/.env`**, then **`docker compose … up`**. That directory **must be a `git clone`** (it must contain **`.git`**). A folder you created with `scp` or “copy project” will fail with `fatal: not a git repository` — fix by cloning once on the server, e.g. `git clone https://github.com/<you>/<repo>.git ~/document-intelligence-system`, and set **`EC2_DEPLOY_PATH`** if you use a different path.
 
 **Repository secrets** (Settings → Secrets and variables → Actions):
 

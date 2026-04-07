@@ -9,6 +9,9 @@
 #   S3_INPUT_BUCKET=my-raw
 #   AWS_REGION=us-east-1
 # Written to $REPO/docker/.env before docker compose (chmod 600).
+#
+# EC2 must have a real git clone at EC2_DEPLOY_PATH (not a copied folder — need .git).
+# One-time on the server: git clone https://github.com/OWNER/REPO.git ~/document-intelligence-system
 
 name: Deploy to EC2
 
@@ -69,6 +72,19 @@ jobs:
           script: |
             set -euo pipefail
             REPO="${DEPLOY_PATH:-/home/${EC2_USER_FOR_PATH}/document-intelligence-system}"
+            if [ ! -d "$REPO" ]; then
+              echo "::error::Deploy path does not exist on server: $REPO"
+              echo "Create it with: git clone https://github.com/${{ github.repository }}.git $REPO"
+              exit 1
+            fi
+            if [ ! -d "$REPO/.git" ]; then
+              echo "::error::Not a git repository (no .git): $REPO"
+              echo "The workflow needs git pull. On EC2 run once:"
+              echo "  rm -rf \"$REPO\"   # only if safe — removes non-git copy"
+              echo "  git clone https://github.com/${{ github.repository }}.git \"$REPO\""
+              echo "Or set secret EC2_DEPLOY_PATH to your actual clone path."
+              exit 1
+            fi
             cd "$REPO"
             BRANCH="${{ github.ref_name }}"
             git fetch origin "$BRANCH"
