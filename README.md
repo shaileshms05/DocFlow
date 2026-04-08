@@ -88,7 +88,7 @@ docker compose up --build
 
 This starts **Kafka** (KRaft, no Zookeeper), **MLflow** (SQLite on `mlflow_data`), **API**, and **consumer**. **No Postgres.** Set **`S3_BUCKET`** and **`AWS_REGION`** in `docker/.env` (or on the host) for one-bucket storage; otherwise everything uses the **`app_data`** volume at `/data`.
 
-If **Kafka exits immediately** after image or KRaft changes, reset metadata: `docker compose down -v` (the `kafka_data` volume must match `CLUSTER_ID` in `docker-compose.yml`).
+If **Kafka exits immediately** after image or KRaft changes, reset metadata: `docker compose down -v` (the `kafka_data` volume must match `CLUSTER_ID` in `docker-compose.yml`). Kafka data is stored under **`KAFKA_LOG_DIRS`** (`/var/lib/kafka/data` in Compose), mounted from the **`kafka_data`** volume — not under `/tmp`.
 
 | Service   | URL / port |
 |-----------|------------|
