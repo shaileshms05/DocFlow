@@ -86,7 +86,7 @@ cd docker
 docker compose up --build
 ```
 
-This starts **Zookeeper**, **Kafka**, **MLflow** (SQLite on `mlflow_data`), **API**, and **consumer**. **No Postgres.** Set **`S3_BUCKET`** and **`AWS_REGION`** in `docker/.env` (or on the host) for one-bucket storage; otherwise everything uses the **`app_data`** volume at `/data`.
+This starts **Kafka** (KRaft, no Zookeeper), **MLflow** (SQLite on `mlflow_data`), **API**, and **consumer**. **No Postgres.** Set **`S3_BUCKET`** and **`AWS_REGION`** in `docker/.env` (or on the host) for one-bucket storage; otherwise everything uses the **`app_data`** volume at `/data`.
 
 | Service   | URL / port |
 |-----------|------------|
@@ -138,7 +138,7 @@ Yes. The stack is plain **Docker Compose**, so any **x86_64** (or **arm64** if y
 
 | Workload | Instance (example) | Notes |
 |----------|-------------------|--------|
-| Demo / low traffic | `t3.large` or `t3.xlarge` | 2–4 vCPU, 8–16 GiB RAM; Kafka + Postgres + MLflow need headroom |
+| Demo / low traffic | `t3.large` or `t3.xlarge` | 2–4 vCPU, 8–16 GiB RAM; Kafka + MLflow need headroom |
 | Heavier OCR / concurrency | `m6i.xlarge` or larger | More CPU helps Tesseract and parallel uploads |
 
 Use a **gp3** EBS root (or data) volume of at least **30–50 GiB** so Docker images, volumes, and MLflow artifacts do not fill the disk.
@@ -149,7 +149,7 @@ Use a **gp3** EBS root (or data) volume of at least **30–50 GiB** so Docker im
 - **8000** — only for the FastAPI app; restrict to **your IP**, a **VPN**, or an **Application Load Balancer** security group. Do **not** leave `0.0.0.0/0` on 8000 in production without TLS and auth in front.
 - **MLflow (5000)** has **no authentication** in this demo. The EC2 Compose file publishes it only on **127.0.0.1:5000** on the instance; use **SSH port forwarding** for the UI:  
   `ssh -L 5000:127.0.0.1:5000 ubuntu@<ec2-ip>`
-- **Do not** expose **9092** or **2181** to the public internet. On EC2, `docker-compose.ec2.yml` does **not** publish Kafka or Zookeeper to the host. Your security group should still avoid wide-open rules on **8000**.
+- **Do not** expose **9092** (Kafka) to the public internet. On EC2, `docker-compose.ec2.yml` does **not** publish Kafka to the host. Your security group should still avoid wide-open rules on **8000**.
 
 ### Steps on the instance
 
@@ -162,7 +162,7 @@ bash scripts/ec2-bootstrap.sh
 # log out and SSH back in so the `docker` group applies
 ```
 
-3. Start the **EC2-oriented** Compose file (Kafka, Postgres, and Zookeeper are **not** published to the host; only the API is on `:8000`). MLflow is on **127.0.0.1:5000** only (use SSH port forwarding for the UI).
+3. Start the **EC2-oriented** Compose file (Kafka in **KRaft** mode — no Zookeeper — is **not** published to the host; only the API is on `:8000`). MLflow is on **127.0.0.1:5000** only (use SSH port forwarding for the UI).
 
 ```bash
 cd docker

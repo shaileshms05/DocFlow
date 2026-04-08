@@ -1,4 +1,4 @@
-# EC2: internal Kafka only; API on :8000; MLflow on 127.0.0.1:5000.
+# EC2: internal Kafka only (KRaft, no Zookeeper); API on :8000; MLflow on 127.0.0.1:5000.
 # No Postgres — set S3_BUCKET (+ AWS_REGION) for one-bucket layout: raw/, processed/, ingest/, feedback/
 #
 #   docker compose -f docker-compose.ec2.yml up -d --build
@@ -6,32 +6,25 @@
 name: document-intelligence
 
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_4LW_COMMANDS_WHITELIST: "ruok,srvr"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc -w 2 localhost 2181 | grep -q imok"]
-      interval: 10s
-      timeout: 10s
-      retries: 8
-      start_period: 30s
-
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    depends_on:
-      zookeeper:
-        condition: service_healthy
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:29092 || exit 1"]
       interval: 5s
@@ -91,5 +84,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  kafka_data:
   mlflow_data:
   app_data:
