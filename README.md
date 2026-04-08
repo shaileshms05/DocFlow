@@ -88,13 +88,13 @@ docker compose up --build
 
 This starts **Kafka** (KRaft, no Zookeeper), **MLflow** (SQLite on `mlflow_data`), **API**, and **consumer**. **No Postgres.** Set **`S3_BUCKET`** and **`AWS_REGION`** in `docker/.env` (or on the host) for one-bucket storage; otherwise everything uses the **`app_data`** volume at `/data`.
 
-If **Kafka exits immediately** after switching KRaft settings, remove old metadata and retry: `docker compose down -v` (drops volumes; only the `kafka_data` layout must match `CLUSTER_ID` in `docker-compose.yml`).
+If **Kafka exits immediately** after image or KRaft changes, reset metadata: `docker compose down -v` (the `kafka_data` volume must match `CLUSTER_ID` in `docker-compose.yml`).
 
 | Service   | URL / port |
 |-----------|------------|
 | API       | `http://localhost:8000` |
 | MLflow UI | `http://localhost:5000` |
-| Kafka     | `localhost:9092` from your machine; `kafka:29092` inside the Compose network |
+| Kafka     | `localhost:9092` from your machine (host listener); **`kafka:19092`** for API/consumer **inside** Compose (`apache/kafka` KRaft layout) |
 
 **Upload from the host** (same as local quick start):
 
