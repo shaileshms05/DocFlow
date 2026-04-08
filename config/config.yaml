@@ -1,10 +1,13 @@
-# Central configuration. Env overrides: S3_BUCKET, AWS_REGION, KAFKA_BOOTSTRAP_SERVERS, etc.
+# Central configuration. Env overrides: S3_BUCKET, AWS_REGION, KAFKA_BOOTSTRAP_SERVERS, OCR_BACKEND, etc.
 #
 # Single S3 bucket — separate prefixes (no second bucket):
 #   raw/        — PDF uploads (storage.s3_raw_prefix)
 #   processed/  — extraction JSON (s3_output.processed_prefix)
 #   ingest/     — pipeline audit (s3_output.ingest_prefix)
 #   feedback/   — feedback events (s3_output.feedback_prefix)
+
+aws:
+  region: "us-east-1"  # override with AWS_REGION
 
 app:
   host: "0.0.0.0"
@@ -33,6 +36,9 @@ kafka:
   topic_processed_documents: "processed_documents"
   topic_feedback_events: "feedback_events"
 
+ml:
+  comprehend_enabled: true  # Amazon Comprehend entities + key phrases on OCR text (set false to skip API calls)
+
 mlflow:
   tracking_uri: "http://localhost:5000"
   experiment_name: "document-intelligence"
@@ -43,6 +49,7 @@ spark:
   app_name: "DocumentIntelligenceStream"
 
 ocr:
+  backend: "tesseract"  # tesseract | textract (PDFs always use Tesseract; Textract for images/S3 non-PDF; OCR_BACKEND env overrides)
   tesseract_cmd: ""
   language: "eng"
 

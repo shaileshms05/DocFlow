@@ -1,10 +1,9 @@
-"""OCR: Tesseract-based text extraction (images and PDF pages)."""
+"""OCR: Tesseract (open source) for images and PDFs (PDFs rendered via pdf2image + Poppler)."""
 
 from __future__ import annotations
 
 import io
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -37,11 +36,29 @@ def extract_text(file_path: str) -> Tuple[str, _BOXES_TYPE]:
     if file_path.startswith("file://"):
         path = file_path[7:]
     raw = Path(path).read_bytes()
-    return extract_text_from_bytes(raw, Path(path).suffix.lower())
+    suf = Path(path).suffix.lower()
+    return extract_text_from_bytes(raw, suffix=suf, file_path=file_path)
 
 
-def extract_text_from_bytes(data: bytes, suffix: str = ".png") -> Tuple[str, _BOXES_TYPE]:
-    """Dispatch by extension: PDF vs image."""
+def extract_text_from_bytes(
+    data: bytes,
+    suffix: str = ".png",
+    file_path: str = "",
+) -> Tuple[str, _BOXES_TYPE]:
+    """
+    Dispatch by extension: PDF vs image.
+
+    If ``ocr.backend`` is ``textract`` (or env ``OCR_BACKEND=textract``), uses AWS Textract for
+    non-PDF sources; **PDFs always use Tesseract** (same as the default backend).
+    """
+    cfg = _config()
+    backend = os.environ.get("OCR_BACKEND", (cfg.get("ocr") or {}).get("backend", "tesseract"))
+    if backend == "textract":
+        from streaming.textract_ocr import extract_text_textract
+
+        fp = file_path or ""
+        return extract_text_textract(fp, data, suffix)
+
     _setup_tesseract()
     import pytesseract
     from PIL import Image
@@ -52,19 +69,7 @@ def extract_text_from_bytes(data: bytes, suffix: str = ".png") -> Tuple[str, _BO
     lang = os.environ.get("OCR_LANGUAGE", _config().get("ocr", {}).get("language", "eng"))
 
     if suffix == ".pdf":
-        try:
-            from pdf2image import convert_from_bytes
-        except ImportError:
-            return "[pdf2image not installed; install poppler + pdf2image]", []
-        try:
-            pages = convert_from_bytes(data, dpi=200)
-        except Exception as e:
-            return f"[pdf conversion failed: {e}]", []
-        for i, pil in enumerate(pages):
-            t, b = _ocr_page(pytesseract, pil, lang, page_index=i)
-            texts.append(t)
-            boxes.extend(b)
-        return "\n\n".join(texts), boxes
+        return extract_text_from_pdf_tesseract_bytes(data)
 
     try:
         pil = Image.open(io.BytesIO(data)).convert("RGB")
@@ -106,3 +111,28 @@ def _ocr_page(pytesseract_mod, pil_image, lang: str, page_index: int) -> Tuple[s
     except Exception:
         pass
     return text.strip(), boxes
+
+
+def extract_text_from_pdf_tesseract_bytes(data: bytes) -> Tuple[str, _BOXES_TYPE]:
+    """Render each PDF page to an image and run Tesseract OCR (requires pdf2image + Poppler)."""
+    _setup_tesseract()
+    import pytesseract
+
+    try:
+        from pdf2image import convert_from_bytes
+    except ImportError:
+        return "[pdf2image not installed]", []
+
+    lang = os.environ.get("OCR_LANGUAGE", _config().get("ocr", {}).get("language", "eng"))
+    try:
+        pages = convert_from_bytes(data, dpi=200)
+    except Exception as e:
+        return f"[pdf conversion failed: {e}]", []
+
+    texts: List[str] = []
+    boxes: _BOXES_TYPE = []
+    for i, pil in enumerate(pages):
+        t, b = _ocr_page(pytesseract, pil, lang, page_index=i)
+        texts.append(t)
+        boxes.extend(b)
+    return "\n\n".join(texts), boxes

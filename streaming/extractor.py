@@ -111,11 +111,39 @@ def extract_fields(text: str, doc_type_hint: str | None = None) -> Dict[str, Any
     return {"doc_type": doc_type, "fields": fields, "confidence": round(conf, 4)}
 
 
-def build_result_payload(doc_id: str, text: str, doc_type_hint: str | None) -> Dict[str, Any]:
+def build_result_payload(
+    doc_id: str,
+    text: str,
+    doc_type_hint: str | None,
+    ml: Dict[str, Any] | None = None,
+    layout_blocks: list | None = None,
+    ocr_backend: str | None = None,
+) -> Dict[str, Any]:
     ex = extract_fields(text, doc_type_hint)
-    return {
+    fields = ex["fields"]
+    if ml and ml.get("entities"):
+        try:
+            from ml.comprehend_entities import merge_entities_into_fields
+
+            fields = merge_entities_into_fields(fields, ml["entities"])
+        except Exception:
+            pass
+    out: Dict[str, Any] = {
         "doc_id": doc_id,
         "doc_type": ex["doc_type"],
-        "fields": ex["fields"],
+        "fields": fields,
         "confidence": ex["confidence"],
     }
+    if ocr_backend:
+        out["ocr"] = {"backend": ocr_backend}
+    if ml:
+        out["ml"] = {
+            "entities": (ml.get("entities") or [])[:50],
+            "key_phrases": (ml.get("key_phrases") or [])[:30],
+        }
+    if layout_blocks:
+        out["layout"] = {
+            "line_count": len(layout_blocks),
+            "lines": layout_blocks[:40],
+        }
+    return out

@@ -25,6 +25,7 @@ def process_upload_event(event: dict) -> dict:
     """Single-document pipeline: load file, OCR, extract, persist, return payload."""
     from ingestion.kafka_producer import get_producer
     from storage.s3_utils import load_config, read_file_bytes, save_processed_json, save_ingest_manifest
+    from ml.comprehend_entities import enrich_text_with_comprehend
     from streaming.extractor import build_result_payload
     from streaming.ocr import extract_text_from_bytes
 
@@ -35,8 +36,28 @@ def process_upload_event(event: dict) -> dict:
     raw = read_file_bytes(file_path)
 
     suffix = Path(file_path.split("?")[0]).suffix.lower() or ".png"
-    text, _boxes = extract_text_from_bytes(raw, suffix=suffix)
-    payload = build_result_payload(doc_id, text, doc_type if doc_type != "unknown" else None)
+    text, boxes = extract_text_from_bytes(raw, suffix=suffix, file_path=file_path)
+
+    ocr_backend = "tesseract"
+    try:
+        import yaml
+
+        with open(_ROOT / "config" / "config.yaml", encoding="utf-8") as f:
+            ocr_backend = (yaml.safe_load(f).get("ocr") or {}).get("backend", "tesseract")
+    except Exception:
+        pass
+    if os.environ.get("OCR_BACKEND"):
+        ocr_backend = os.environ["OCR_BACKEND"]
+
+    ml = enrich_text_with_comprehend(text)
+    payload = build_result_payload(
+        doc_id,
+        text,
+        doc_type if doc_type != "unknown" else None,
+        ml=ml or None,
+        layout_blocks=boxes or None,
+        ocr_backend=ocr_backend,
+    )
     json_uri = save_processed_json(doc_id, payload)
     try:
         save_ingest_manifest(
